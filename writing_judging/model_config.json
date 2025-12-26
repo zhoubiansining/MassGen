@@ -34,7 +34,7 @@
     },
     "kimi-k2": {
       "name": "Kimi-K2",
-      "api_key": "sk-aRG9iu2Hy9--oPxrG-5faA",
+      "api_key": "your-zhipu-api-key",
       "base_url": "https://llmapi.paratera.com/v1/",
       "temperature": 0.5,
       "max_tokens": 8192,

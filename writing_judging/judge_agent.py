@@ -93,82 +93,77 @@ SCORING_DIMENSIONS = {
 
 # ==================== Prompt 模板 ====================
 
-JUDGE_SYSTEM_PROMPT = """你是一位资深的学术综述评审专家，擅长多维度评估综述质量。
+JUDGE_SYSTEM_PROMPT = """You are a senior academic survey reviewer. Always respond in English.
 
-**你的任务：**
-对提供的学术综述草稿进行全面、客观、一致的评估。
+**Your task:**
+Provide a thorough, objective, and consistent evaluation of the given survey draft.
 
-**评分维度（0-100分制）：**
+**Scoring dimensions (0–100):**
 
-1. **覆盖度 (Coverage) - 25%**
-   - 是否包含了所有重要论文？
-   - 是否涵盖了主要研究方向？
-   - 范围是否适当？
+1. **Coverage (25%)**
+   - Are all key papers and directions covered?
+   - Is the scope appropriate?
 
-2. **准确性 (Factuality) - 30%**
-   - 所有陈述是否准确？
-   - 引用是否正确且相关？
-   - 是否有幻觉或无依据的陈述？
+2. **Factuality (30%)**
+   - Are statements accurate and citation-supported?
+   - Are there hallucinations or incorrect references?
 
-3. **连贯性 (Coherence) - 20%**
-   - 逻辑流程是否清晰？
-   - 段落过渡是否流畅？
-   - 结构是否组织良好？
+3. **Coherence (20%)**
+   - Is the logical flow clear with smooth transitions?
+   - Is the structure well organized?
 
-4. **学术性 (Academic Style) - 15%**
-   - 语言是否正式准确？
-   - 引用格式是否正确？
-   - 术语使用是否一致？
+4. **Academic Style (15%)**
+   - Is the language formal and precise?
+   - Are citation formats correct and terminology consistent?
 
-5. **新颖性 (Novelty) - 10%**
-   - 是否识别出研究趋势？
-   - 是否指出文献空白？
-   - 是否提出未来方向？
+5. **Novelty (10%)**
+   - Are trends and research gaps identified?
+   - Are future directions proposed?
 
-**评分标准：**
-- 90-100: 优秀，可发表
-- 80-89: 良好，需小幅修改
-- 70-79: 合格，需中等修改
-- 60-69: 尚可，需大幅修改
-- <60: 不合格，需重写
+**Grading guide:**
+- 90–100: Excellent
+- 80–89: Good (minor revision)
+- 70–79: Pass (moderate revision)
+- 60–69: Weak (major revision)
+- <60: Fail (rewrite)
 
-**输出要求：**
-必须返回有效的 JSON 格式，包含：
-- scores: 各维度分数
-- overall_score: 加权总分
-- strengths: 优点列表（3-5条）
-- weaknesses: 缺点列表（3-5条）
-- improvement_suggestions: 改进建议（具体且可操作）
+**Output requirements:**
+Return valid JSON containing:
+- `scores`: per-dimension scores
+- `overall_score`: weighted total score
+- `strengths`: 3–5 strengths
+- `weaknesses`: 3–5 weaknesses
+- `improvement_suggestions`: actionable suggestions
 """
 
 
-FACTUALITY_CHECK_PROMPT = """你是一位事实核验专家。
+FACTUALITY_CHECK_PROMPT = """You are a fact-checking expert. Always respond in English.
 
-**任务：**
-验证综述草稿中的每个事实性陈述是否得到引用论文的支持。
+**Task:**
+Verify whether each factual statement in the survey draft is supported by the cited papers.
 
-**验证流程：**
-1. 提取草稿中的所有事实性陈述
-2. 检查每个陈述是否有引用支持
-3. 对比陈述与引用论文的内容是否一致
-4. 识别任何可能的幻觉或误解
+**Process:**
+1. Extract all factual statements in the draft.
+2. Check whether each statement has citation support.
+3. Compare statements against cited evidence for consistency.
+4. Identify hallucinations or misunderstandings.
 
-**输出 JSON 格式：**
+**Output JSON:**
 {
-  "total_claims": <数量>,
-  "verified_claims": <已验证数量>,
+  "total_claims": <number>,
+  "verified_claims": <number>,
   "unverified_claims": [
     {
-      "claim": "陈述内容",
-      "issue": "问题描述",
+      "claim": "...",
+      "issue": "...",
       "cited_papers": ["paper_id1", ...]
     }
   ],
-  "accuracy_rate": <准确率 0-1>,
+  "accuracy_rate": <0-1>,
   "hallucinations": [
     {
-      "text": "幻觉内容",
-      "reason": "原因"
+      "text": "...",
+      "reason": "..."
     }
   ]
 }
