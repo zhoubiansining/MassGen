@@ -11,20 +11,28 @@ import sys
 from datetime import datetime
 from typing import Dict, Any, List
 from dotenv import load_dotenv
+import pandas as pd
+
+# 确保当前目录与父目录在搜索路径中，避免相对导入报错
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PARENT_DIR = os.path.dirname(CURRENT_DIR)
+for _p in (CURRENT_DIR, PARENT_DIR):
+    if _p and _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from agents.retrieval_agent import RetrievalAgent
 from agents.analysis_agent import AnalysisAgent
 from writing_judging.writing_agent import WritingAgent, ModelConfig
 from writing_judging.judge_agent import JudgeAgent
-from pipeline_adapter import analysis_to_cluster_summaries
+from writing_judging.pipeline_adapter import analysis_to_cluster_summaries
 from core.schema import LLMMessage
 
 
 # ==================== 配置与环境 ====================
 load_dotenv()
-API_KEY = os.getenv("PARATERA_API_KEY") 
+API_KEY = "sk-aRG9iu2Hy9--oPxrG-5faA" 
 BASE_URL = "https://llmapi.paratera.com/v1/"
-MODEL_NAME = "Kimi-K2"
+MODEL_NAME = "DeepSeek-V3.2"
 
 if not API_KEY:
     print("⚠️  警告: 未检测到 API Key，请检查 .env 文件。")
@@ -97,8 +105,26 @@ def parse_args():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--query", type=str, help="从头开始：指定研究主题")
     group.add_argument("--analysis-json", type=str, help="从中间开始：指定 analysis 结果文件")
+    group.add_argument("--dataset-pkl", type=str, help="使用本地 pkl 数据集作为论文来源，跳过网络检索")
     parser.add_argument("--max-search-steps", type=int, default=3)
+    parser.add_argument("--sample-n", type=int, default=5, help="dataset-pkl 模式下采样条数")
     return parser.parse_args()
+
+
+def load_papers_from_pkl(pkl_path: str, sample_n: int = 5) -> List[Dict[str, Any]]:
+    """从本地 pkl 加载论文列表，模拟检索结果（中文注释方便阅读）。"""
+    df = pd.read_pickle(pkl_path).head(sample_n)
+    papers = []
+    for idx, row in df.iterrows():
+        papers.append({
+            "id": str(idx),
+            "title": row.get("title", ""),
+            "abstract": row.get("abstract", ""),
+            "authors": [],
+            "year": None,
+            "summary": row.get("abstract", "")
+        })
+    return papers
 
 # ==================== 主流程 ====================
 
@@ -143,31 +169,42 @@ async def main():
         save_json(papers, RUN_DIR, "1_retrieval_papers")
         print(f"✅ 检索完成，获取 {len(papers)} 篇论文。")
 
-        # >>> Phase 2: Analysis <<<
-        print("\n" + "=" * 80)
-        print("Phase 2: Analysis Agent (深度分析)")
-        print("=" * 80)
-        
-        analyzer = AnalysisAgent(datas=papers, **COMMON_AGENT_ARGS)
-        analysis_result = await analyzer.run(args.query)
-        
-        save_json(serialize_history(analyzer.history), TRAJ_DIR, "analysis_traj")
-        
-        if not analysis_result:
-            print("❌ 分析失败。")
+    elif args.dataset_pkl:
+        print(f"\n📂 Loading papers from dataset: {args.dataset_pkl}")
+        papers = load_papers_from_pkl(args.dataset_pkl, sample_n=args.sample_n)
+        if not papers:
+            print("❌ 数据集为空或解析失败。")
             return
-        save_json(analysis_result, RUN_DIR, "2_analysis_result")
-        print(f"✅ 分析完成，生成 {len(analysis_result.get('clusters', []))} 个研究聚类。")
-        
-        print("\n🔄 Adapting data format...")
-        cluster_summaries = analysis_to_cluster_summaries(analysis_result, papers)
-        
+        save_json(papers, RUN_DIR, "1_retrieval_papers_dataset")
+        print(f"✅ 成功载入 {len(papers)} 篇论文（本地数据集）。")
+
     else:
         print(f"\n📂 Loading analysis from {args.analysis_json}")
         with open(args.analysis_json, "r", encoding="utf-8") as f:
             analysis_result = json.load(f)
         papers = analysis_result.get("datas", [])
         cluster_summaries = analysis_to_cluster_summaries(analysis_result)
+
+    # >>> Phase 2: Analysis <<<
+    if not cluster_summaries:
+        print("\n" + "=" * 80)
+        print("Phase 2: Analysis Agent (深度分析)")
+        print("=" * 80)
+
+        analyzer = AnalysisAgent(datas=papers, **COMMON_AGENT_ARGS)
+        analysis_task = args.query or (f"Dataset-{os.path.basename(args.dataset_pkl)}" if args.dataset_pkl else "Analysis")
+        analysis_result = await analyzer.run(analysis_task)
+
+        save_json(serialize_history(analyzer.history), TRAJ_DIR, "analysis_traj")
+
+        if not analysis_result:
+            print("❌ 分析失败。")
+            return
+        save_json(analysis_result, RUN_DIR, "2_analysis_result")
+        print(f"✅ 分析完成，生成 {len(analysis_result.get('clusters', []))} 个研究聚类。")
+
+        print("\n🔄 Adapting data format...")
+        cluster_summaries = analysis_to_cluster_summaries(analysis_result, papers)
 
     if not cluster_summaries:
         print("❌ 无法获取 Cluster Summaries，流程终止。")
