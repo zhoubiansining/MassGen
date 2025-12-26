@@ -30,7 +30,7 @@ from core.schema import LLMMessage
 
 # ==================== 配置与环境 ====================
 load_dotenv()
-API_KEY = "sk-aRG9iu2Hy9--oPxrG-5faA" 
+API_KEY = "your api key" 
 BASE_URL = "https://llmapi.paratera.com/v1/"
 MODEL_NAME = "DeepSeek-V3.2"
 
