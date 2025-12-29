@@ -190,7 +190,8 @@ class LLMClient:
                 messages=messages,
                 temperature=temperature or self.config.temperature,
                 max_tokens=self.config.max_tokens,
-                top_p=self.config.top_p
+                top_p=self.config.top_p,
+                extra_body={"enable_thinking": False}
             )
             return response.choices[0].message.content
         except Exception as e:
@@ -518,25 +519,44 @@ class JudgeAgent:
             auto_weight: 最终融合时自动指标所占权重（0-1）
         """
 
-        evaluations = []
-        for cfg in model_configs:
+        # 并行运行每个模型的评估（需在事件循环外调用此函数时传入）
+        async def eval_single(cfg: ModelConfig):
             agent = JudgeAgent(cfg)
-            result = agent.evaluate_draft(draft, reference)
-            result["model_name"] = cfg.name
-            evaluations.append(result)
+            res = await agent.evaluate_draft_async(draft, reference)
+            res["model_name"] = cfg.name
+            return res
 
-        llm_average = round(sum(e["overall_score"] for e in evaluations) / len(evaluations), 2) if evaluations else 0.0
+        if model_configs:
+            # 若当前无运行中的事件循环，创建并运行；若在循环内调用，抛出异常让上层改用 async 版本
+            try:
+                loop = asyncio.get_running_loop()
+                raise RuntimeError("multi_model_vote_with_auto_metrics called inside running loop; use async variant")
+            except RuntimeError:
+                loop = None
+            if loop is None:
+                evaluations = asyncio.get_event_loop().run_until_complete(
+                    asyncio.gather(*(eval_single(cfg) for cfg in model_configs))
+                )
+            else:
+                evaluations = []
+        else:
+            evaluations = []
+
+        llm_average = round(sum(e.get("overall_score", 0) for e in evaluations) / len(evaluations), 2) if evaluations else 0.0
 
         auto_summary = JudgeAgent._summarize_auto_metrics(auto_metrics, auto_metric_weights) if auto_metrics else None
         auto_overall = auto_summary.get("overall_score") if auto_summary else None
 
         final_score = JudgeAgent._blend_scores(llm_average, auto_overall, auto_weight)
 
+        model_scores = {e["model_name"]: e.get("overall_score") for e in evaluations}
+
         return {
             "llm_evaluations": evaluations,
             "llm_average": llm_average,
             "auto_evaluation": auto_summary,
             "final_score": final_score,
+            "model_scores": model_scores,
             "weights": {
                 "auto_weight": auto_weight,
                 "llm_weight": 1 - auto_weight
@@ -575,6 +595,8 @@ class JudgeAgent:
             evaluation = self.evaluate_draft(draft, reference)
             evaluation["draft_id"] = i
             evaluation["draft"] = draft
+            # 记录单模型打分，便于外部写入
+            evaluation["model_scores"] = {self.model_config.name: evaluation.get("overall_score")}
             evaluations.append(evaluation)
 
         # 按总分排序
@@ -608,6 +630,7 @@ class JudgeAgent:
         for i, evaluation in enumerate(evaluations):
             evaluation["draft_id"] = i
             evaluation["draft"] = drafts[i]
+            evaluation["model_scores"] = {self.model_config.name: evaluation.get("overall_score")}
 
         # 按总分排序
         evaluations.sort(key=lambda x: x["overall_score"], reverse=True)

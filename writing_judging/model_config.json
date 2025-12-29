@@ -1,56 +1,56 @@
 {
   "models": {
     "qwen-max": {
-      "name": "qwen-max",
-      "api_key": "your-dashscope-api-key",
+      "name": "DeepSeek-V3.2-Thinking",
+      "api_key": "sk-aRG9iu2Hy9--oPxrG-5faA",
       "base_url": "https://llmapi.paratera.com/v1/",
-      "temperature": 0.5,
+      "temperature": 0,
       "max_tokens": 8192,
       "description": "阿里通义千问-Max，长文本生成质量高"
     },
     "qwen-plus": {
-      "name": "qwen-plus",
-      "api_key": "your-dashscope-api-key",
+      "name": "GLM-4-Plus",
+      "api_key": "sk-aRG9iu2Hy9--oPxrG-5faA",
       "base_url": "https://llmapi.paratera.com/v1/",
-      "temperature": 0.5,
+      "temperature": 0,
       "max_tokens": 8192,
       "description": "阿里通义千问-Plus，性价比高"
     },
     "deepseek-chat": {
-      "name": "deepseek-chat",
-      "api_key": "your-deepseek-api-key",
+      "name": "GLM-4.6",
+      "api_key": "sk-aRG9iu2Hy9--oPxrG-5faA",
       "base_url": "https://llmapi.paratera.com/v1/",
-      "temperature": 0.5,
+      "temperature": 0,
       "max_tokens": 8192,
       "description": "DeepSeek，推理能力强，成本低"
     },
     "glm-4": {
-      "name": "glm-4",
-      "api_key": "your-zhipu-api-key",
+      "name": "Qwen3-32B",
+      "api_key": "sk-aRG9iu2Hy9--oPxrG-5faA",
       "base_url": "https://llmapi.paratera.com/v1/",
-      "temperature": 0.5,
+      "temperature": 0,
       "max_tokens": 8192,
       "description": "智谱GLM-4，中文理解能力强"
     },
     "kimi-k2": {
       "name": "Kimi-K2",
-      "api_key": "your-zhipu-api-key",
+      "api_key": "sk-aRG9iu2Hy9--oPxrG-5faA",
       "base_url": "https://llmapi.paratera.com/v1/",
-      "temperature": 0.5,
+      "temperature": 0,
       "max_tokens": 8192,
       "description": "Kimi（通过代理），长上下文能力强，注意不要使用 $Kimi-K2"
     },
     "doubao-pro": {
-      "name": "doubao-pro-32k",
-      "api_key": "your-doubao-api-key",
+      "name": "MiniMax-M1-80k",
+      "api_key": "sk-aRG9iu2Hy9--oPxrG-5faA",
       "base_url": "https://llmapi.paratera.com/v1/",
-      "temperature": 0.5,
+      "temperature": 0,
       "max_tokens": 8192,
       "description": "字节豆包Pro，速度快"
     }
   },
   "writing_agent": {
-    "default_model": "kimi-k2",
+    "default_model": "DeepSeek-V3.2-Thinking",
     "candidate_generation": {
       "num_candidates": 3,
       "temperature_range": [0.5, 0.6]
