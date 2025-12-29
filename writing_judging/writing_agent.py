@@ -129,7 +129,8 @@ class LLMClient:
                 messages=messages,
                 temperature=temperature or self.config.temperature,
                 max_tokens=self.config.max_tokens,
-                top_p=self.config.top_p
+                top_p=self.config.top_p,
+                extra_body={"enable_thinking": False}
             )
             return response.choices[0].message.content
         except Exception as e:
