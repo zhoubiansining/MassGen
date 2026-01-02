@@ -6,6 +6,7 @@
 import asyncio
 import argparse
 import json
+import re
 import os
 import sys
 import time
@@ -123,16 +124,18 @@ def save_json(data: Any, folder: str, filename: str):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    group = parser.add_mutually_exclusive_group(required=True)
+    group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument("--query", type=str, help="从头开始：指定研究主题")
     group.add_argument("--analysis-json", type=str, help="从中间开始：指定 analysis 结果文件")
-    group.add_argument("--dataset-pkl", type=str, help="使用本地 pkl 数据集作为论文来源，跳过网络检索")
+    group.add_argument("--dataset-pkl", type=str, help="使用本地 pkl 数据集作为“检索种子”（仅提取标题发起检索）")
     parser.add_argument("--max-search-steps", type=int, default=3)
     parser.add_argument("--sample-n", type=int, default=-1, help="dataset-pkl 模式下采样条数，-1 表示全部")
     parser.add_argument("--skip-n", type=int, default=0, help="dataset-pkl 模式下跳过前 N 条样本")
     parser.add_argument("--use-test-only", action="store_true", help="dataset-pkl 模式下仅使用 split == 'test' 的样本")
     parser.add_argument("--per-paper", action="store_true", help="dataset-pkl 模式下逐篇处理，每篇分配一个 API Key（分析/写作/多模型评审共用该 Key）")
     parser.add_argument("--api-keys-file", type=str, help="存放多个 API Key 的文件（每行一个或 JSON 数组）")
+    parser.add_argument("--retrieval-only", action="store_true", help="仅执行检索并保存结果，不进入分析/写作/评审")
+    parser.add_argument("--reuse-retrieval-dir", type=str, help="使用指定目录下的 title_<idx>_retrieval.json 作为检索结果，跳过在线检索")
     return parser.parse_args()
 
 
@@ -154,6 +157,16 @@ def load_papers_from_pkl(pkl_path: str, sample_n: int = -1, use_test_only: bool 
             "summary": row.get("abstract", "")
         })
     return papers
+
+
+def load_titles_from_pkl(pkl_path: str, sample_n: int = -1, use_test_only: bool = False) -> List[str]:
+    """从本地 pkl 加载标题列表（用于发起检索）。"""
+    df = pd.read_pickle(pkl_path)
+    if use_test_only and "split" in df.columns:
+        df = df[df["split"] == "test"]
+    if sample_n and sample_n > 0:
+        df = df.head(sample_n)
+    return [str(t) for t in df.get("title", []) if str(t).strip()]
 
 
 def log_progress(step: int, total: int, label: str):
@@ -221,6 +234,9 @@ def build_configs(api_key: str) -> Dict[str, Any]:
 
 async def main():
     args = parse_args()
+    if not (args.query or args.analysis_json or args.dataset_pkl or args.reuse_retrieval_dir):
+        print("❌ 需要提供 --query / --analysis-json / --dataset-pkl / --reuse-retrieval-dir 之一。")
+        return
     
     # 1. 目录初始化
     RUN_ID = get_timestamp()
@@ -243,8 +259,8 @@ async def main():
     # ------------------------------------------------------------------
     # Phase 1 & 2: 数据获取 (Retrieval + Analysis)
     # ------------------------------------------------------------------
-    if args.per_paper and not args.dataset_pkl:
-        print("❌ per-paper 模式需配合 --dataset-pkl 使用。")
+    if args.per_paper and not (args.dataset_pkl or args.reuse_retrieval_dir):
+        print("❌ per-paper 模式需提供 --dataset-pkl 或 --reuse-retrieval-dir。")
         return
 
     if args.per_paper:
@@ -252,53 +268,169 @@ async def main():
         if not api_keys:
             print("❌ 未找到有效的 API Key 列表，请检查 --api-keys-file。")
             return
-        papers = load_papers_from_pkl(args.dataset_pkl, sample_n=args.sample_n, use_test_only=args.use_test_only)
-        if args.skip_n and args.skip_n > 0:
-            papers = papers[args.skip_n:]
-        if not papers:
-            print("❌ 数据集为空或解析失败。")
+
+        # 使用测试集标题作为检索起点（强制只取 test）
+        # 处理 reuse_retrieval_dir（直接复用已下载的检索结果）
+        reuse_entries = []
+        reuse_ids: List[int] = []
+        if args.reuse_retrieval_dir:
+            import glob
+            pattern = os.path.join(args.reuse_retrieval_dir, "title_*_retrieval.json")
+            files = sorted(
+                glob.glob(pattern), 
+                key=lambda x: int(re.search(r"title_(\d+)_retrieval", os.path.basename(x)).group(1)) 
+                              if re.search(r"title_(\d+)_retrieval", os.path.basename(x)) else 0
+            )
+            for path in files:
+                try:
+                    data = json.load(open(path, "r", encoding="utf-8"))
+                    fname = os.path.basename(path)
+                    m = re.search(r"title_(\d+)_retrieval", fname)
+                    file_id = int(m.group(1)) if m else len(reuse_entries) + 1
+                    if isinstance(data, dict):
+                        title_val = data.get("title") or os.path.basename(path)
+                        papers_val = data.get("papers") or []
+                    else:
+                        title_val = os.path.basename(path)
+                        papers_val = data
+                    reuse_entries.append((title_val, papers_val))
+                    reuse_ids.append(file_id)
+                except Exception as e:
+                    print(f"⚠️ 无法读取 {path}: {e}")
+
+        if args.reuse_retrieval_dir and not reuse_entries:
+            print("❌ reuse_retrieval_dir 未找到任何 title_*_retrieval.json")
             return
 
-        total_papers = len(papers)
+        if args.reuse_retrieval_dir:
+            titles = [t for t, _ in reuse_entries]
+            preloaded_papers = [p for _, p in reuse_entries]
+        else:
+            titles = load_titles_from_pkl(
+                args.dataset_pkl,
+                sample_n=args.sample_n,
+                use_test_only=True,
+            )
+            preloaded_papers = None
+
+        if args.skip_n and args.skip_n > 0:
+            titles = titles[args.skip_n:]
+            if preloaded_papers:
+                preloaded_papers = preloaded_papers[args.skip_n:]
+            if args.reuse_retrieval_dir and reuse_ids:
+                reuse_ids = reuse_ids[args.skip_n:]
+        if not titles:
+            print("❌ 数据集为空或未找到标题。")
+            return
+
+        total_titles = len(titles)
         start_index = args.skip_n or 0
         run_start = time.time()
+        print(f"📑 从测试集提取 {total_titles} 个标题，准备启动检索")
 
-        # 每个 API 一个 worker，串行处理分配给它的多篇文章；多个 API 并行
         task_queue = asyncio.Queue()
-        for idx, paper in enumerate(papers):
-            # 逻辑编号从 1 开始，叠加 skip 偏移，便于与原始序号对齐
+        for idx, title in enumerate(titles):
             logical_idx = idx + start_index
-            task_queue.put_nowait((logical_idx, paper))
+            item_id = reuse_ids[idx] if args.reuse_retrieval_dir and reuse_ids and idx < len(reuse_ids) else logical_idx + 1
+            papers_prefill = preloaded_papers[idx] if preloaded_papers and idx < len(preloaded_papers) else None
+            task_queue.put_nowait((logical_idx, item_id, title, papers_prefill))
         completed = 0
         completed_lock = asyncio.Lock()
 
-        async def process_article(idx: int, paper: Dict[str, Any], key: str):
+        async def process_title(display_idx: int, item_id: int, title: str, papers_prefill: Any, key: str):
             cfgs = build_configs(key)
-            display_current = idx + 1  # idx 已包含 skip 偏移
-            display_total = total_papers + start_index
-            print(f"\n=== 处理第 {display_current}/{display_total} 篇，使用模型 Key: {key[:6]}... ===")
+            display_current = display_idx + 1
+            display_total = total_titles + start_index
+            print(f"\n=== 处理第 {display_current}/{display_total} 个标题，使用模型 Key: {key[:6]}... ===")
 
-            # 分析
-            analyzer = AnalysisAgent(datas=[paper], **cfgs["common"])
-            analysis_result = await analyzer.run(f"Dataset-Article-{paper.get('id')}")
-            # 兼容返回 list 的情况，取首个元素
+            # Phase 1: 检索或复用
+            if papers_prefill is not None:
+                papers_local = papers_prefill
+            else:
+                retriever = RetrievalAgent(**cfgs["common"])
+                papers_local = await retriever.run(title, max_steps=args.max_search_steps)
+                if not papers_local:
+                    print("❌ 检索无结果，跳过该标题。")
+                    return
+
+            # 补齐 ID
+            for i, p in enumerate(papers_local):
+                if not p.get("id"):
+                    p["id"] = f"p{i+1}"
+                if not p.get("paper_id"):
+                    p["paper_id"] = p["id"]
+
+            # 保存检索结果，带上标题元数据
+            save_json({"title": title, "papers": papers_local}, RUN_DIR, f"title_{item_id}_retrieval")
+
+            # 仅检索模式，提前返回
+            if args.retrieval_only:
+                return
+
+            # Phase 2: 分析
+            analyzer = AnalysisAgent(datas=papers_local, **cfgs["common"])
+            analysis_result = await analyzer.run(title)
             if isinstance(analysis_result, list):
                 analysis_result = analysis_result[0] if analysis_result else {}
-            cluster_summaries = analysis_to_cluster_summaries(analysis_result, [paper])
+            if not analysis_result:
+                print("❌ 分析失败，跳过该标题。")
+                return
+            cluster_summaries_local = analysis_to_cluster_summaries(analysis_result, papers_local)
 
-            # 写作 3 篇（温度 0.3/0.4/0.5 各 1 篇）
+            # 如果生成的 summaries 仍然缺失 paper_id 或包含 tool call 残留，做一次简单兜底
+            def _invalid_cluster(cs: Dict[str, Any]) -> bool:
+                if not cs:
+                    return True
+                topics = list(cs.values())
+                if not topics:
+                    return True
+                topic_txt = topics[0].get("summary") or ""
+                return "<function_calls>" in topic_txt or any(p.get("paper_id") is None for c in topics for p in c.get("papers", []))
+
+            if _invalid_cluster(cluster_summaries_local):
+                print("⚠️ 分析结果异常，使用兜底 cluster_summaries。")
+                cluster_summaries_local = {
+                    "cluster_0": {
+                        "topic": f"Survey seed: {title}",
+                        "summary": f"Papers retrieved for: {title}",
+                        "papers": [
+                            {
+                                "paper_id": p.get("paper_id"),
+                                "title": p.get("title"),
+                                "authors": p.get("authors", []),
+                                "year": p.get("year") or p.get("published"),
+                                "key_contribution": p.get("summary") or p.get("abstract", ""),
+                                "abstract": p.get("abstract") or p.get("summary"),
+                                "url": p.get("url") or p.get("link"),
+                            }
+                            for p in papers_local
+                        ],
+                    }
+                }
+            save_json(analysis_result, RUN_DIR, f"title_{item_id}_analysis")
+            save_json(cluster_summaries_local, RUN_DIR, f"title_{item_id}_adapter_input")
+
+            # Phase 3: 写作（温度 0.3/0.4/0.5 各 1 篇）
             writer = WritingAgent(cfgs["writer"], style="narrative")
             candidates, cid = [], 1
             temps = [0.3, 0.4, 0.5]
             writing_start = time.time()
             for t in temps:
-                draft = await writer.generate_draft_async(cluster_summaries=cluster_summaries, temperature=t)
+                draft = await writer.generate_draft_async(
+                    cluster_summaries=cluster_summaries_local,
+                    temperature=t,
+                )
                 draft["candidate_id"] = cid
                 cid += 1
                 candidates.append(draft)
-                render_progress(len(candidates), 3, writing_start, "写作进度")
+                render_progress(len(candidates), len(temps), writing_start, "写作进度")
 
-            # 评审（同一 Key 调用配置文件中的所有模型，取平均）
+            if not candidates:
+                print("❌ 写作失败，跳过该标题。")
+                return
+            save_json(candidates, RUN_DIR, f"title_{item_id}_writing_candidates")
+
+            # Phase 4: 评审（多模型评分 + 引文指标融合）
             judge_model_configs = load_judge_models(os.path.join(CURRENT_DIR, "model_config.json"))
             if not judge_model_configs:
                 print("❌ 无可用评审模型（model_config.json 为空）。")
@@ -306,7 +438,7 @@ async def main():
             judge_model_configs = [
                 ModelConfig(
                     name=mc.name,
-                    api_key=key,  # 用当前文章的 key 覆盖
+                    api_key=key,
                     base_url=mc.base_url,
                     temperature=mc.temperature,
                     max_tokens=mc.max_tokens,
@@ -318,29 +450,21 @@ async def main():
             draft_texts = [c['content'] for c in candidates]
             eval_start = time.time()
             evals = []
-            for j, draft in enumerate(draft_texts, 1):
-                # 计算自动指标（引文精度/召回/F1/准确率）
-                pred_refs = set(candidates[j-1].get("citations", [])) if j-1 < len(candidates) else set()
-                human_refs = {
-                    paper.get("paper_id")
-                    for cluster in cluster_summaries.values()
-                    for paper in cluster.get("papers", [])
-                    if paper.get("paper_id")
-                }
+            human_refs = {
+                paper.get("paper_id")
+                for cluster in cluster_summaries_local.values()
+                for paper in cluster.get("papers", [])
+                if paper.get("paper_id")
+            }
+
+            async def eval_one(idx_c: int, draft: str, cand_meta: Dict):
+                # 自动指标（仅引文）
+                pred_refs = set(cand_meta.get("citations", []))
                 matches = len(pred_refs & human_refs)
                 prec = matches / len(pred_refs) if pred_refs else 0.0
                 rec = matches / len(human_refs) if human_refs else 0.0
                 f1 = 2 * prec * rec / (prec + rec) if prec + rec > 0 else 0.0
-                # 内容、结构指标占位：可接入语义相似度/结构匹配模型
-                content_metrics = {
-                    "semantic_similarity": 0.0,  # TODO: 接入向量相似度
-                    "rouge_l": 0.0,              # TODO: 接入 Rouge-L
-                    "kpr": 0.0                    # TODO: 接入关键点召回
-                }
-                structure_metrics = {
-                    "overlap": 0.0,        # TODO: 结构重叠度
-                    "relevance_llm": 0.0   # TODO: LLM 结构相关性 1-5
-                }
+
                 auto_metrics = {
                     "citation": {
                         "precision": prec,
@@ -348,69 +472,71 @@ async def main():
                         "f1": f1,
                         "accuracy": prec,
                     },
-                    "content": content_metrics,
-                    "structure": structure_metrics,
+                    "content": {},
+                    "structure": {},
                 }
 
-                # 异步并行多模型评分，取均分
+                # 多模型评分并取均值
                 async def eval_model(cfg: ModelConfig):
                     agent = JudgeAgent(cfg)
-                    res = await agent.evaluate_draft_async(draft, {"task": "Dataset-Article", "clusters": cluster_summaries})
-                    # 将自动指标融合到最终分数（50% 模型均分 + 50% 引文指标）
-                    # 这里先返回模型分，后续计算均分再与 auto_metrics 融合
-                    return cfg.name, res.get("overall_score")
+                    res = await agent.evaluate_draft_async(draft, {"task": title, "clusters": cluster_summaries_local})
+                    return cfg.name, res.get("overall_score"), res.get("scores")
 
                 results = await asyncio.gather(*[eval_model(cfg) for cfg in judge_model_configs])
-                model_scores = {name: score for name, score in results if score is not None}
-                avg_score = round(sum(model_scores.values()) / len(model_scores), 2) if model_scores else 0.0
+                model_scores = {
+                    name: {
+                        "overall": overall,
+                        "dimensions": dims or {}
+                    }
+                    for name, overall, dims in results
+                    if overall is not None
+                }
+                avg_score = round(sum(ms.get("overall", 0) for ms in model_scores.values()) / len(model_scores), 2) if model_scores else 0.0
 
-                # 仅使用引文自动指标，权重 30%；模型均分权重 70%
+                # 融合：70% 模型均分 + 30% 引文 F1（0-100）
                 citation_score = auto_metrics["citation"]["f1"] * 100
-                auto_overall = citation_score  # 内容/结构占位为 0
+                final_score = round(avg_score * 0.7 + citation_score * 0.3, 2)
 
-                final_score = round(avg_score * 0.7 + auto_overall * 0.3, 2)
-
-                evals.append({
-                    "draft_id": j-1,
+                return {
+                    "draft_id": idx_c,
                     "draft": draft,
                     "model_scores": model_scores,
                     "auto_metrics": auto_metrics,
-                    "vote_final_score": final_score
-                })
-                render_progress(j, len(draft_texts), eval_start, "评审进度")
+                    "vote_final_score": final_score,
+                }
+
+            tasks = [eval_one(j, draft, candidates[j]) for j, draft in enumerate(draft_texts)]
+
+            for i, coro in enumerate(asyncio.as_completed(tasks), 1):
+                evaluation = await coro
+                evals.append(evaluation)
+                render_progress(i, len(draft_texts), eval_start, "评审进度")
 
             ranked_results = sorted(evals, key=lambda x: x.get("vote_final_score") or 0, reverse=True)
+            save_json(ranked_results, RUN_DIR, f"title_{item_id}_judging_result")
 
-            # 输出当前篇结果
-            save_json(cluster_summaries, RUN_DIR, f"article_{idx+1}_cluster_summaries")
-            save_json(candidates, RUN_DIR, f"article_{idx+1}_writing_candidates")
-            save_json(ranked_results, RUN_DIR, f"article_{idx+1}_judging_result")
             best = ranked_results[0]
-            # 保存最佳草稿完整内容
-            save_json(best, RUN_DIR, f"article_{idx+1}_best")
-            with open(os.path.join(RUN_DIR, f"article_{idx+1}_best.txt"), "w", encoding="utf-8") as f:
+            save_json(best, RUN_DIR, f"title_{item_id}_best")
+            with open(os.path.join(RUN_DIR, f"title_{item_id}_best.txt"), "w", encoding="utf-8") as f:
                 f.write(best.get("draft", ""))
-            print(f"\n第 {idx+1} 篇最佳草稿得分: {best['vote_final_score']} (模型均分 {best['model_scores']})")
+
+            print(f"\n第 {display_current} 个标题最佳草稿得分: {best['vote_final_score']} (模型均分 {best.get('model_scores')})")
 
         async def worker(key: str):
             nonlocal completed
             while not task_queue.empty():
                 try:
-                    idx, paper = task_queue.get_nowait()
+                    display_idx, item_id, title, papers_prefill = task_queue.get_nowait()
                 except asyncio.QueueEmpty:
                     return
-                await process_article(idx, paper, key)
+                await process_title(display_idx, item_id, title, papers_prefill, key)
                 task_queue.task_done()
                 async with completed_lock:
                     completed += 1
-                    render_progress(completed, total_papers, run_start, "文章进度")
+                    render_progress(completed, total_titles, run_start, "标题进度")
 
-        workers = []
-        for key in api_keys:
-            workers.append(worker(key))
-
-        await asyncio.gather(*workers)
-        print("\n✅ 所有文章处理完成。")
+        await asyncio.gather(*(worker(k) for k in api_keys))
+        print("\n✅ 所有标题处理完成。")
         return
 
     if args.query:
