@@ -77,7 +77,8 @@ WRITING_AGENT_SYSTEM_PROMPT = """You are an expert academic survey writer. Alway
 5. Every factual claim must be supported by a citation.
 
 **Output Requirements**
-- Length: 400–700 words per section
+- Length: except Citations, at least 3,000 words in total
+- Paragraphs: minimum 5 paragraphs; keep each paragraph substantial (e.g., 300+ words)
 - Structure: Background → Methods → Comparison → Challenges → Future directions
 - Citations: In-text [paper_id]; list references at the end
 - Style: {style_type}
@@ -179,10 +180,11 @@ class WritingAgent:
 {json.dumps(cluster_summaries, ensure_ascii=False, indent=2)}
 
 # Requirements
-1. Length 400–700 words
-2. Structure: Background → Methods → Comparison → Challenges → Future directions
-3. Use [paper_id] for in-text citations
-4. Every factual statement must have citation support
+1. Length: at least 1,500 words in total
+2. Paragraphs: minimum 5 paragraphs; keep each paragraph substantial (e.g., 200+ words)
+3. Structure: Background → Methods → Comparison → Challenges → Future directions
+4. Use [paper_id] for in-text citations
+5. Every factual statement must have citation support
 
 # Output
 1. Survey text with in-text citations

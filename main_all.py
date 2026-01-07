@@ -35,7 +35,7 @@ from core.schema import LLMMessage
 load_dotenv()
 API_KEY = "sk-aRG9iu2Hy9--oPxrG-5faA"
 BASE_URL = os.getenv("PARATERA_BASE_URL", "https://llmapi.paratera.com/v1/")
-MODEL_NAME = os.getenv("PARATERA_MODEL", "DeepSeek-V3.2-Instruct")
+MODEL_NAME = os.getenv("PARATERA_MODEL", "Qwen3-235B-A22B-Instruct-2507")
 
 if not API_KEY:
     print("⚠️  警告: 未检测到 API Key，请检查 .env 文件。")
