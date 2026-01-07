@@ -29,21 +29,21 @@ class ModelConfig:
 MODEL_CONFIGS = {
     "kimi-k2": ModelConfig(
         name="Kimi-K2",  # 注意：不要使用 $Kimi-K2
-        api_key="sk-aRG9iu2Hy9--oPxrG-5faA",
+        api_key="api-key",
         base_url="https://llmapi.paratera.com/v1/",
         temperature=0.2,  # Judge 使用更低的温度以提高一致性
         max_tokens=4096
     ),
     "qwen-max": ModelConfig(
         name="qwen-max",
-        api_key="your-dashscope-api-key",
+        api_key="api-key",
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
         temperature=0.2,
         max_tokens=4096
     ),
     "deepseek-chat": ModelConfig(
         name="deepseek-chat",
-        api_key="your-deepseek-api-key",
+        api_key="api-key",
         base_url="https://api.deepseek.com/v1",
         temperature=0.2,
         max_tokens=4096

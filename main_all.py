@@ -33,8 +33,8 @@ from core.schema import LLMMessage
 
 # ==================== 配置与环境 ====================
 load_dotenv()
-API_KEY = "sk-aRG9iu2Hy9--oPxrG-5faA"
-BASE_URL = os.getenv("PARATERA_BASE_URL", "https://llmapi.paratera.com/v1/")
+API_KEY = "api"
+BASE_URL = os.getenv("PARATERA_BASE_URL", "base-url")
 MODEL_NAME = os.getenv("PARATERA_MODEL", "Qwen3-235B-A22B-Instruct-2507")
 
 if not API_KEY:

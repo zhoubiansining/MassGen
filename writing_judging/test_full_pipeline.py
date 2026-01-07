@@ -14,7 +14,7 @@ from pipeline_adapter import analysis_to_cluster_summaries
 
 CONFIG = ModelConfig(
     name="Kimi-K2",
-    api_key="sk-aRG9iu2Hy9--oPxrG-5faA",
+    api_key="api",
     base_url="https://llmapi.paratera.com/v1/",
     temperature=0.5,
     max_tokens=4096,
@@ -101,7 +101,7 @@ def main():
     args = parse_args()
     cluster_summaries = load_cluster_summaries(args.analysis_json)
 
-    # 1) 生成候选草稿：温度 0.3/0.4/0.5 各 3 篇，共 9 篇
+    # 1) 生成候选草稿：温度 0.3/0.4/0.5 各 1 篇，共 3 篇
     writer = WritingAgent(CONFIG, style="narrative")
     temps = [0.3, 0.4, 0.5]
     candidates = writer.generate_candidates_by_temps(
